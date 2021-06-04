@@ -30,21 +30,25 @@ class Decoder(srd.Decoder):
     outputs = ['empty']
     tags = ['Embedded/industrial']
     channels = (
-        {'id': 'rx', 'name': 'RX', 'desc': 'receive data'},
+        {'id': 'tx', 'name': 'TX', 'desc': 'transmit data'},
+        {'id': 'rx', 'name': 'RX', 'desc': 'receive data'}
     )
     
     options = (
-        {'id': 'dir', 'desc': 'direction', 'default': 'rx',
-         'values': ('rx', 'tx')},
+        {'id': 'bitorder', 'desc': 'Bit order', 'default': 'msb-first', 'values': ('msb-first', 'lsb-first')},
+        {'id': 'acc', 'desc': 'accuracy', 'default': 5},
     )
     annotations = (
         ('stp', 'Start pulse'),
         ('bit', 'Bit'),
-        ('msg', 'Message'),
+        ('msgT', 'Message Transmit'),
+        ('msgR', 'Message Receive'),
+        ('par', 'Parity')
     )
     annotation_rows = (
-        ('fields', 'Fields', (0, 1)),
-        ('msgval', 'Message row', (2,))
+        ('fields', 'Fields', (0, 1, 4)),
+        ('msgval', 'Message trans', (2,)),
+        ('msgrxval', 'Message receive', (3,))
     )
 
     # def __init__(self):
@@ -60,52 +64,122 @@ class Decoder(srd.Decoder):
 
     def metadata(self, key, value):
         if key == srd.SRD_CONF_SAMPLERATE:
-            self.stpNumMin = int(11.5 * (value/1000.0))
-            self.stpNumMax = int(12.5 * (value/1000.0))
-            self.oneBitNumMin = int(2.7 * (value/1000.0))
-            self.oneBitNumMax = int(3.3 * (value/1000.0))
-            self.zeroBitNumMin = int(0.9 * (value/1000.0))
-            self.zeroBitNumMax = int(1.1 * (value/1000.0))
-            self.endNumMin = int(18.5 * (value/1000.0))
-            self.endNumMax = int(19.5 * (value/1000.0))
+            self.stpTx = int(12.0 * (value/1000.0))
+            self.stpTxPas = int(1.27 * (value/1000.0))
+            self.oneBitTx = int(3.0 * (value/1000.0))
+            self.zeroBitTx = int(1.0 * (value/1000.0))
+            self.bitTxPas = int(1.0 * (value/1000.0))
+            self.endPulseTx = int(19.0 * (value/1000.0))
+            self.stpRx = int(9.0 * (value/1000.0))
+            self.stpRxPas = int(1.0 * (value/1000.0))
+            self.oneBitRx = int(3.0 * (value/1000.0))
+            self.zeroBitRx = int(1.0 * (value/1000.0))
+            self.bitRxPas = int(1.0 * (value/1000.0))
+            self.endPulseRx = int(19.0 * (value/1000.0))
+            self.TxRx = int(1.41 * (value/1000.0))
+            self.RxTx = int(1.78 * (value/1000.0))
+            
+
+    def near(self,value,target):
+        return True if ((value > (target - target*self.options['acc']/100)) and (value < (target + target*self.options['acc']/100))) else False
+
+    def lastNear(self,target):
+        samples = self.samplenum - self.lastSampleNum
+        answer = True if ((samples > (target - target*self.options['acc']/100)) and (samples < (target + target*self.options['acc']/100))) else False
+        self.preLastSampleNum = self.lastSampleNum
+        self.lastSampleNum = self.samplenum
+        return answer
 
 
     def decode(self):
         while True:
-            self.wait({0:'r'})
-            self.first_rise_samplenum = self.samplenum
-            self.wait({0:'f'})
-            if self.samplenum - self.first_rise_samplenum > self.stpNumMin and self.samplenum - self.first_rise_samplenum < self.stpNumMax:
-                self.put(self.first_rise_samplenum, self.samplenum, self.out_ann, [0, ['Start pulse', 'Start']])
-                work = 1
-                i = 0
-                self.message = 0
-                while work:
-                    self.wait({0:'r'})
-                    self.rise_samplenum = self.samplenum
-                    self.wait({0:'f'})
-                    if self.samplenum - self.rise_samplenum > self.oneBitNumMin and self.samplenum - self.rise_samplenum < self.oneBitNumMax:
-                        self.put(self.rise_samplenum, self.samplenum, self.out_ann, [1, ['{0}'.format(i)]])
-                        self.message += 1 << i
-                        i += 1
-                    elif self.samplenum - self.rise_samplenum > self.zeroBitNumMin and self.samplenum - self.rise_samplenum < self.zeroBitNumMax:
-                        self.put(self.rise_samplenum, self.samplenum, self.out_ann, [1, ['0']])
-                        i += 1
-                    elif self.samplenum - self.rise_samplenum > self.endNumMin and self.samplenum - self.rise_samplenum < self.endNumMax:
-                        self.put(self.rise_samplenum, self.samplenum, self.out_ann, [0, ['End pulse','End']])
-                        work = False
+            pins = self.wait([{0:'r',1:'h'},{0:'l',1:'f'}])
+            self.startSampleNum = self.samplenum
+            self.lastSampleNum = self.samplenum
+            if pins[0] == 1:
+                self.wait({0:'f'})
+                if self.near(self.samplenum - self.lastSampleNum,self.stpTx):
+                    self.put(self.lastSampleNum, self.samplenum, self.out_ann, [0, ['Start pulse', 'Start']])
+                    work = 1
+                    i = 0
+                    self.lsbMessage = 0
+                    while work:
+                        self.wait({0:'r'})
+                        self.lastSampleNum = self.samplenum
+                        self.wait({0:'f'})
+                        if self.near(self.samplenum - self.lastSampleNum, self.oneBitTx):
+                            if i != 10 and i!= 26:
+                                self.lsbMessage += 1 << i
+                                self.put(self.lastSampleNum, self.samplenum, self.out_ann, [1, ['{0}'.format(i)]])
+                            else:
+                                self.put(self.lastSampleNum, self.samplenum, self.out_ann, [4, ['{0}'.format(i)]])
+                            i += 1
+                        elif self.near(self.samplenum - self.lastSampleNum, self.zeroBitTx):
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [1 if i != 10 and i!= 26 else 4, ['0']])
+                            i += 1
+                        elif self.near(self.samplenum - self.lastSampleNum, self.endPulseTx):
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [0, ['End pulse','End']])
+                            work = False
+                        else:
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [0, ['Error','Err']])
                     else:
-                        self.put(self.rise_samplenum, self.samplenum, self.out_ann, [0, ['Error','Err']])
-                else:
-                    self.messageInv = 0
-                    #i -= 1
-                    for j in range(i):
-                        self.messageInv = self.messageInv | ((( self.message >> (39 - j) ) & 1 ) << j)
-                    #even odd
-                    #MSB LSB
-                    #most significant byte
-                    #least significant byte
-                    self.even = (self.message >> 10) & 1
-                    self.odd = (self.message >> 26) & 1
-                    self.put(self.first_rise_samplenum, self.samplenum, self.out_ann, [2, ['{0} {1} {2} {3}'.format(self.even, self.odd, hex(self.message), hex(self.messageInv))]])
+                        self.msbMessage = 0
+                        #i -= 1
+                        for j in range(i):
+                            self.msbMessage = self.msbMessage | ((( self.lsbMessage >> (39 - j) ) & 1 ) << j)
+                        #even odd
+                        #MSB LSB
+                        #most significant byte
+                        #least significant byte
+                        self.even = (self.lsbMessage >> 10) & 1
+                        self.odd = (self.lsbMessage >> 26) & 1
+                        if self.even:
+                            message = "even" 
+                        elif self.odd:
+                            message = "odd"
+                        else:
+                            message = ""
+                        if self.options['bitorder'] == 'lsb-first':
+                            message = message + " " + str(hex(self.lsbMessage))
+                        else:
+                            message = message + " " + str(hex(self.msbMessage))
+                        self.put(self.startSampleNum, self.samplenum, self.out_ann, [2, ['{0}'.format(message)]])
+            else:
+                self.startSampleNum = self.samplenum
+                self.wait({1:'r'})
+                if self.near(self.samplenum - self.startSampleNum, self.stpRx):
+                    self.put(self.startSampleNum, self.samplenum, self.out_ann, [0, ['Start pulse', 'Start']])
+                    work = 1
+                    i = 0
+                    self.lsbMessage = 0
+                    while work:
+                        self.wait({1:'f'})
+                        self.lastSampleNum = self.samplenum
+                        self.wait({1:'r'})
+                        if self.near(self.samplenum - self.lastSampleNum, self.oneBitRx):
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [1, ['{0}'.format(i)]])
+                            self.lsbMessage += 1 << i
+                            i += 1
+                        elif self.near(self.samplenum - self.lastSampleNum, self.zeroBitRx):
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [1, ['0']])
+                            i += 1
+                        elif self.near(self.samplenum - self.lastSampleNum, self.endPulseRx):
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [0, ['End pulse','End']])
+                            work = False
+                        else:
+                            self.put(self.lastSampleNum, self.samplenum, self.out_ann, [0, ['Error','Err']])
+                    else:
+                        self.msbMessage = 0
+                        #i -= 1
+                        for j in range(i):
+                            self.msbMessage = self.msbMessage | ((( self.lsbMessage >> (39 - j) ) & 1 ) << j)
+                        #even odd
+                        #MSB LSB
+                        #most significant byte
+                        #least significant byte
+                        if self.options['bitorder'] == 'lsb-first':
+                            message = str(hex(self.lsbMessage))
+                        else:
+                            message = str(hex(self.msbMessage))
+                        self.put(self.startSampleNum, self.samplenum, self.out_ann, [3, ['{0}'.format(message)]])
 
