@@ -43,12 +43,14 @@ class Decoder(srd.Decoder):
         ('bit', 'Bit'),
         ('msgT', 'Message Transmit'),
         ('msgR', 'Message Receive'),
-        ('par', 'Parity')
+        ('par', 'Parity'),
+        ('unkn', 'unknown')
     )
     annotation_rows = (
         ('fields', 'Fields', (0, 1, 4)),
         ('msgval', 'Message trans', (2,)),
-        ('msgrxval', 'Message receive', (3,))
+        ('msgrxval', 'Message receive', (3,)),
+        ('msgUnknown', 'Message unknown', (5,))
     )
 
     # def __init__(self):
@@ -119,10 +121,10 @@ class Decoder(srd.Decoder):
                                 self.wait({0:'r'})
                                 if self.nowNear(self.oneBitTxPas):
                                     if i != 10 and i!= 26:
-                                        self.lsbMessage += 1 << i
                                         self.put(self.sampleNum[-3], self.sampleNum[-1], self.out_ann, [1, ['{0}'.format(i)]])
                                     else:
                                         self.put(self.sampleNum[-3], self.sampleNum[-1], self.out_ann, [4, ['{0}'.format(i)]])
+                                    self.lsbMessage += 1 << i
                                     i += 1
                                 else:
                                     self.put(self.sampleNum[0], self.samplenum, self.out_ann, [0, ['Error','Err']])
@@ -143,27 +145,34 @@ class Decoder(srd.Decoder):
                                 work = False
                                 break
                         else:
-                            self.msbMessage = 0
-                            #i -= 1
-                            for j in range(i):
-                                self.msbMessage = self.msbMessage | ((( self.lsbMessage >> (39 - j) ) & 1 ) << j)
-                            #even odd
-                            #MSB LSB
-                            #most significant byte
-                            #least significant byte
-                            self.even = (self.lsbMessage >> 10) & 1
-                            self.odd = (self.lsbMessage >> 26) & 1
-                            if self.even:
-                                message = "even" 
-                            elif self.odd:
-                                message = "odd"
+                            if i == 40:
+                                self.msbMessage = 0
+                                #i -= 1
+                                for j in range(i):
+                                    self.msbMessage = self.msbMessage | ((( self.lsbMessage >> (39 - j) ) & 1 ) << j)
+                                #even odd
+                                #MSB LSB
+                                #most significant byte
+                                #least significant byte
+                                pwr1dict = (0, 1, 2, 3, 7, 8, 9, 10, 12, 14)
+                                pwr2dict = (0, 1, 2, 3, 7, 8, 9, 13, 15, 18)
+                                pwr1 = (self.msbMessage >> 16) & 0b11111111
+                                pwr2 = (self.msbMessage >> 32) & 0b11111111
+                                self.even = (self.lsbMessage >> 10) & 1
+                                self.odd = (self.lsbMessage >> 26) & 1
+                                if self.even != 0 and self.odd == 0:
+                                    message = "even" 
+                                elif self.odd != 0 and self.even == 0:
+                                    message = "odd"
+                                else:
+                                    message = "parity unknown"
+                                if self.options['bitorder'] == 'lsb-first':
+                                    message = message + " " + str(hex(self.lsbMessage))
+                                else:
+                                    message = message + " " + str(hex(self.msbMessage))
+                                self.put(self.sampleNum[0], self.sampleNum[-1], self.out_ann, [2, ['{0} 1:{1} 2:{2} {3} {4}'.format(message,pwr1dict.index(pwr1),pwr2dict.index(pwr2),self.odd, self.even)]])
                             else:
-                                message = ""
-                            if self.options['bitorder'] == 'lsb-first':
-                                message = message + " " + str(hex(self.lsbMessage))
-                            else:
-                                message = message + " " + str(hex(self.msbMessage))
-                            self.put(self.sampleNum[0], self.sampleNum[-1], self.out_ann, [2, ['{0}'.format(message)]])
+                                self.put(self.sampleNum[0], self.sampleNum[-1], self.out_ann, [2, ['Error bit count']])
             else:
                 self.wait({1:'r'})
                 if self.nowNear(self.stpRxAct):
@@ -211,5 +220,8 @@ class Decoder(srd.Decoder):
                                 message = str(hex(self.lsbMessage))
                             else:
                                 message = str(hex(self.msbMessage))
-                            self.put(self.sampleNum[0], self.samplenum, self.out_ann, [3, ['{0}'.format(message)]])
+                            if  self.lsbMessage == 0 or self.lsbMessage == 0x10000:
+                                self.put(self.sampleNum[0], self.samplenum, self.out_ann, [3, ['{0}'.format(message)]])
+                            else:
+                                self.put(self.sampleNum[0], self.samplenum, self.out_ann, [5, ['{0}'.format(message)]])
 
