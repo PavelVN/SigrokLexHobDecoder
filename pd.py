@@ -170,7 +170,7 @@ class Decoder(srd.Decoder):
                                     message = message + " " + str(hex(self.lsbMessage))
                                 else:
                                     message = message + " " + str(hex(self.msbMessage))
-                                self.put(self.sampleNum[0], self.sampleNum[-1], self.out_ann, [2, ['{0} 1:{1} 2:{2} {3} {4}'.format(message,pwr1dict.index(pwr1),pwr2dict.index(pwr2),self.odd, self.even)]])
+                                self.put(self.sampleNum[0], self.sampleNum[-1], self.out_ann, [2, ['{0} 1:{1} 2:{2}'.format(message,pwr1dict.index(pwr1),pwr2dict.index(pwr2))]])
                             else:
                                 self.put(self.sampleNum[0], self.sampleNum[-1], self.out_ann, [2, ['Error bit count']])
             else:
@@ -220,7 +220,7 @@ class Decoder(srd.Decoder):
                                 message = str(hex(self.lsbMessage))
                             else:
                                 message = str(hex(self.msbMessage))
-                            if  self.lsbMessage == 0 or self.lsbMessage == 0x10000:
+                            if  self.lsbMessage == 0 or self.lsbMessage == 0x10000 or self.lsbMessage == 0x30000:
                                 self.put(self.sampleNum[0], self.samplenum, self.out_ann, [3, ['{0}'.format(message)]])
                             else:
                                 self.put(self.sampleNum[0], self.samplenum, self.out_ann, [5, ['{0}'.format(message)]])
